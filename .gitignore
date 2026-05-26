@@ -1,0 +1,21 @@
+# Virtual environment
+.venv/
+
+# Environment variables (NEVER push this)
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Database (auto-generated)
+data/stocks.db
+
+# VSCode settings
+.vscode/
+
+# OS junk
+.DS_Store
+Thumbs.db
