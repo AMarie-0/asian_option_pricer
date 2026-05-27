@@ -12,6 +12,7 @@ __pycache__/
 
 # Database (auto-generated)
 data/stocks.db
+data/prices.duckdb
 
 # VSCode settings
 .vscode/
