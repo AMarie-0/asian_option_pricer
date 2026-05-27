@@ -120,15 +120,17 @@ def fetch_prices(
     if isinstance(raw.columns, pd.MultiIndex):
         raw.columns = raw.columns.get_level_values(0)
 
-    df = (
-        raw[["Close"]]
-        .rename(columns={"Close": "adj_close"})
-        .reset_index()
-        .rename(columns={"Date": "date"})
-    )
+    df = raw[["Close"]].rename(columns={"Close": "adj_close"}).reset_index()
+    # flatten any tuple column names yfinance sometimes produces
+    df.columns = [str(c[0]) if isinstance(c, tuple) else str(c) for c in df.columns]
+    print("DEBUG columns:", df.columns.tolist())
+    date_col = next(c for c in df.columns if c.lower() in ("date", "datetime", "index"))
+    df = df.rename(columns={date_col: "date"})
+
 
     df["date"]   = pd.to_datetime(df["date"]).dt.date
     df["ticker"] = ticker
+
 
     df = df.dropna(subset=["adj_close"]).sort_values("date").reset_index(drop=True)
 
@@ -153,3 +155,12 @@ def fetch_risk_free_rate() -> float:
     except Exception as e:
         print(f"[WARNING] Could not fetch risk-free rate ({e}). Defaulting to r = 0.01.")
         return 0.01
+    
+if __name__ == "__main__":
+    df = fetch_prices("GS", "2020-01-01", "2026-04-28")
+    print(df.head(10))
+    print(df.tail(5))
+    print(f"\nShape: {df.shape}")
+    
+    r = fetch_risk_free_rate()
+    print(f"\nRisk-free rate: {r}")
