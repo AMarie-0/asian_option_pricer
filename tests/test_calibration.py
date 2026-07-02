@@ -1,17 +1,17 @@
-# tests/test_calibration.py
-from data.fetch import fetch_prices
-from data.calibrate import calibrate
+﻿import pytest
+from data.fetch import fetch_prices, COMMON_TICKERS
+from src.model.calibration import calibrate
 
-df = fetch_prices("AAPL", "2020-01-01", "2026-04-28")
+TICKERS_TO_TEST = list(COMMON_TICKERS.keys())
 
-params = calibrate(df, r=0.01, n=25, T=0.5)
 
-params.display()
+@pytest.mark.parametrize("ticker", TICKERS_TO_TEST)
+def test_calibration(ticker):
+    df = fetch_prices(ticker, "2020-01-01", "2026-04-28")
+    params = calibrate(df, ticker=ticker, r=0.01, n=25, T=0.5)
 
-# sanity checks  (dot access, not dict access)
-assert 0.20 < params.sigma < 0.60,          f"sigma out of range: {params.sigma}"
-assert abs(params.u * params.d - 1) < 1e-10, "u*d != 1"
-assert 0 < params.q < 1,                    f"q not a valid probability: {params.q}"
-assert params.S0 > 0,                       f"S0 must be positive: {params.S0}"
-
-print("All checks passed.")
+    assert 0.05 < params.sigma < 1.0,            f"{ticker}: sigma out of range: {params.sigma}"
+    assert abs(params.u * params.d - 1) < 1e-10, f"{ticker}: u*d != 1"
+    assert 0 < params.q < 1,                     f"{ticker}: q not a valid probability: {params.q}"
+    assert params.S0 > 0,                        f"{ticker}: S0 must be positive: {params.S0}"
+    assert params.ticker == ticker

@@ -5,18 +5,45 @@ import pandas as pd
 from datetime import datetime, date
 
 # ── constants ────────────────────────────────────────────────────────────────
+# Reference list of well-known tickers — any valid Yahoo Finance symbol works.
+# Full symbol directory: https://finance.yahoo.com/lookup/
 
-SUPPORTED_TICKERS = {
+COMMON_TICKERS = {
+    # US large-cap equities
     "AAPL":  "Apple Inc.",
     "MSFT":  "Microsoft Corp.",
     "GOOGL": "Alphabet Inc.",
+    "AMZN":  "Amazon.com Inc.",
+    "META":  "Meta Platforms Inc.",
     "TSLA":  "Tesla Inc.",
     "NVDA":  "NVIDIA Corp.",
+    "BRK-B": "Berkshire Hathaway B",
     "JPM":   "JPMorgan Chase",
     "GS":    "Goldman Sachs",
     "JNJ":   "Johnson & Johnson",
     "XOM":   "ExxonMobil",
-    "SPY":   "S&P 500 ETF",
+    "V":     "Visa Inc.",
+    "MA":    "Mastercard Inc.",
+    "UNH":   "UnitedHealth Group",
+    "BAC":   "Bank of America",
+    "WMT":   "Walmart Inc.",
+    "PG":    "Procter & Gamble",
+    "HD":    "Home Depot Inc.",
+    "CVX":   "Chevron Corp.",
+    # ETFs
+    "SPY":   "S&P 500 ETF (SPDR)",
+    "QQQ":   "Nasdaq-100 ETF (Invesco)",
+    "DIA":   "Dow Jones ETF (SPDR)",
+    "IWM":   "Russell 2000 ETF (iShares)",
+    "GLD":   "Gold ETF (SPDR)",
+    "TLT":   "20+ Year Treasury ETF (iShares)",
+    # International
+    "TSM":   "Taiwan Semiconductor",
+    "BABA":  "Alibaba Group",
+    "ASML":  "ASML Holding",
+    "SAP":   "SAP SE",
+    "TM":    "Toyota Motor",
+    "SHEL":  "Shell plc",
 }
 
 RISK_FREE_TICKER = "^IRX"   # 3-month T-bill annualised yield (%)
@@ -25,16 +52,6 @@ MIN_YEARS_WARN = 1
 MAX_YEARS_WARN = 15
 
 # ── helpers ───────────────────────────────────────────────────────────────────
-
-def _validate_ticker(ticker: str) -> str:
-    ticker = ticker.upper().strip()
-    if ticker not in SUPPORTED_TICKERS:
-        supported = ", ".join(SUPPORTED_TICKERS.keys())
-        raise ValueError(
-            f"'{ticker}' is not supported.\n"
-            f"Supported tickers: {supported}"
-        )
-    return ticker
 
 
 def _validate_dates(start: date, end: date) -> None:
@@ -92,15 +109,15 @@ def fetch_prices(
     DataFrame with columns ['date', 'adj_close', 'ticker']
     sorted ascending by date, no missing values.
     """
-    ticker = _validate_ticker(ticker)
+    ticker = ticker.upper().strip()
 
     start = _parse_date(start_date)
     end   = _parse_date(end_date) if end_date else date.today()
 
     _validate_dates(start, end)
 
-    print(f"[fetch] Downloading {ticker} ({SUPPORTED_TICKERS[ticker]}) "
-          f"from {start} to {end} ...")
+    name = COMMON_TICKERS.get(ticker, "unknown")
+    print(f"[fetch] Downloading {ticker} ({name}) from {start} to {end} ...")
 
     raw = yf.download(
         ticker,
@@ -113,7 +130,8 @@ def fetch_prices(
     if raw.empty:
         raise RuntimeError(
             f"No data returned for '{ticker}' between {start} and {end}. "
-            "Check your date range or internet connection."
+            "Possible causes: invalid ticker symbol, date range outside trading history, "
+            "or SSL/network error. Verify the symbol at https://finance.yahoo.com/lookup/"
         )
 
     # yfinance returns MultiIndex columns when auto_adjust=True
@@ -121,9 +139,7 @@ def fetch_prices(
         raw.columns = raw.columns.get_level_values(0)
 
     df = raw[["Close"]].rename(columns={"Close": "adj_close"}).reset_index()
-    # flatten any tuple column names yfinance sometimes produces
     df.columns = [str(c[0]) if isinstance(c, tuple) else str(c) for c in df.columns]
-    print("DEBUG columns:", df.columns.tolist())
     date_col = next(c for c in df.columns if c.lower() in ("date", "datetime", "index"))
     df = df.rename(columns={date_col: "date"})
 
@@ -156,6 +172,32 @@ def fetch_risk_free_rate() -> float:
         print(f"[WARNING] Could not fetch risk-free rate ({e}). Defaulting to r = 0.01.")
         return 0.01
     
+def fetch_and_cache(
+    ticker: str,
+    start: str = "2020-01-01",
+    end: str | None = None,
+    db_path: str = "data/prices.duckdb",
+    force_refresh: bool = False,
+) -> "pd.DataFrame":
+    """
+    Return prices for `ticker`, loading from DuckDB cache when available.
+    Downloads fresh data and saves it when the cache is empty or force_refresh=True.
+    """
+    from pathlib import Path
+    from data.database import save_prices, load_prices
+
+    db = Path(db_path)
+    if not force_refresh and db.exists():
+        try:
+            return load_prices(ticker, start=start, end=end, db_path=db)
+        except (FileNotFoundError, ValueError):
+            pass
+
+    df = fetch_prices(ticker, start_date=start, end_date=end)
+    save_prices(df, ticker, db_path=db)
+    return df
+
+
 if __name__ == "__main__":
     df = fetch_prices("GS", "2020-01-01", "2026-04-28")
     print(df.head(10))

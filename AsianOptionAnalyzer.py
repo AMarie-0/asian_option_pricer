@@ -21,8 +21,7 @@ from __future__ import annotations
 import warnings
 warnings.filterwarnings("ignore")
 
-from data.fetch       import fetch_and_cache, SUPPORTED_TICKERS
-from data.database    import StockDatabase
+from data.fetch       import fetch_and_cache, COMMON_TICKERS
 from src.model.calibration    import calibrate, ModelParams
 from src.model.pricer         import price_asian_call
 from src.analytics.robustness import (
@@ -38,6 +37,7 @@ from src.visualization.robustness_plot import (
     plot_convergence,
 )
 from src.visualization.surface_plot import plot_price_surface
+from src.visualization.report      import generate_report
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -50,9 +50,12 @@ class AsianOptionAnalyzer:
     Parameters
     ----------
     ticker : str
-        Must be in SUPPORTED_TICKERS or already in the local DB.
+        Any valid Yahoo Finance symbol (e.g. "AAPL", "NVDA", "SPY").
+        See COMMON for a reference list; full directory at
+        https://finance.yahoo.com/lookup/
     r : float
-        Daily risk-free rate (default 0.02% ≈ 5% p.a.).
+        Annual continuous risk-free rate (default 0.0002 = 0.02% p.a.).
+        Use e.g. r=0.05 for a realistic 5% p.a. rate.
     T : float
         Time to maturity in years (default 0.5).
     n : int
@@ -63,27 +66,20 @@ class AsianOptionAnalyzer:
         Re-download data even if cached.
     """
 
-    SUPPORTED = SUPPORTED_TICKERS
+    COMMON = COMMON_TICKERS
 
     def __init__(
         self,
         ticker:        str   = "AAPL",
-        r:             float = 0.0002,
+        r:             float = 0.01,
         T:             float = 0.5,
         n:             int   = 25,
         start:         str   = "2020-01-01",
         end:           str   = "2026-04-30",
         force_refresh: bool  = False,
-        db_path:       str   = "data/stocks.db",
+        db_path:       str   = "data/prices.duckdb",
     ):
-        ticker = ticker.upper()
-        if ticker not in self.SUPPORTED:
-            avail = ", ".join(self.SUPPORTED)
-            raise ValueError(
-                f"'{ticker}' not supported. Choose from: {avail}"
-            )
-
-        self.ticker = ticker
+        self.ticker = ticker.upper()
         self.r      = r
         self.T      = T
         self.n      = n
@@ -152,6 +148,7 @@ class AsianOptionAnalyzer:
         show_robustness:  bool = True,
         show_convergence: bool = True,
         show_surface:     bool = False,
+        show_report:      bool = True,
         tree_max_steps:   int  = 8,
         verbose:          bool = True,
         save_figures:     bool = False,
@@ -166,8 +163,9 @@ class AsianOptionAnalyzer:
         show_tree        : draw the binomial tree diagram
         show_payoff      : plot payoff distribution at terminal nodes
         show_robustness  : volatility-window sensitivity table & chart
-        show_convergence : price vs n-steps convergence chart
+        show_convergence : price vs n-steps convergence chart (also feeds report)
         show_surface     : 3D (σ, r) → price surface (Plotly)
+        show_report      : generate one-page overnight research report
         tree_max_steps   : how many steps to render in the tree plot
         verbose          : print calibration & pricing summary
         save_figures     : save all figures to output_dir
@@ -210,7 +208,7 @@ class AsianOptionAnalyzer:
                 self.df, self.ticker, r=self.r, T=self.T, n=self.n
             )
             if verbose:
-                print("\n── Robustness (Volatility Window) ──")
+                print("\n-- Robustness (Volatility Window) --")
                 print(self._robustness.to_string(index=False))
             fig = plot_window_sensitivity(
                 self._robustness, self.ticker,
@@ -226,7 +224,7 @@ class AsianOptionAnalyzer:
                 self.df, self.ticker, r=self.r, T=self.T
             )
             if verbose:
-                print("\n── Convergence (Steps) ──")
+                print("\n-- Convergence (Steps) --")
                 print(self._convergence.to_string(index=False))
             fig = plot_convergence(
                 self._convergence, self.ticker,
@@ -243,21 +241,57 @@ class AsianOptionAnalyzer:
                 fig.write_html(f"{output_dir}{self.ticker}_surface.html")
             fig.show()
 
+        # ── 8. Overnight report ───────────────────────────────────
+        if show_report:
+            fig = self.report(
+                save_path=f"{output_dir}{self.ticker}_report.pdf"
+                          if save_figures else None,
+            )
+            plt.show()
+
         return results
+
+    def report(self, save_path: str | None = None) -> plt.Figure:
+        """
+        Generate and return the one-page overnight research report.
+
+        Convergence data is computed on demand if not already cached.
+
+        Parameters
+        ----------
+        save_path : file path for saving (.pdf recommended, .png also works).
+                    Defaults to None (figure is returned but not saved).
+        """
+        if self._convergence is None:
+            self._convergence = step_convergence(
+                self.df, self.ticker, r=self.r, T=self.T
+            )
+
+        approx = normal_approximation_price(self.params)
+
+        return generate_report(
+            params      = self.params,
+            result      = self.result,
+            df          = self.df,
+            approx      = approx,
+            convergence = self._convergence,
+            sigma_window= "full",
+            save_path   = save_path,
+        )
 
     # ── Utilities ─────────────────────────────────────────────────
 
     @classmethod
     def list_tickers(cls) -> None:
-        print("Supported tickers:")
-        for k, v in cls.SUPPORTED.items():
+        print("Common tickers (any valid Yahoo Finance symbol is accepted):")
+        for k, v in cls.COMMON.items():
             print(f"  {k:<8} {v}")
 
     @classmethod
     def compare(
         cls,
         tickers: list[str],
-        r: float = 0.0002,
+        r: float = 0.01,
         T: float = 0.5,
         n: int   = 25,
         verbose: bool = True,
