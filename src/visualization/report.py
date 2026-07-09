@@ -45,10 +45,10 @@ def _draw_header(ax: plt.Axes, ticker: str) -> None:
     ax.text(0, 0.95, "EQUITY DERIVATIVES  ·  RESEARCH",
             fontsize=6.5, color=_BLUE, fontweight="bold", va="top")
     ax.text(0, 0.60,
-            f"{ticker}  —  Asian Call Option  ·  Overnight Pricing Report",
+            f"{ticker}  —  Asian Call Option  ·",
             fontsize=13, color=_DARK, fontweight="bold", va="top")
     ax.text(0, 0.18,
-            "Floating-Strike  ·  European-Style  ·  Binomial Tree (Cox-Ross-Rubinstein, CRR)",
+            "Floating-Strike  ·  European-Style  ·  Binomial Tree Approach  (Cox-Ross-Rubinstein, CRR)",
             fontsize=7, color="#666666", va="top")
     ax.text(1, 0.95, date.today().strftime("%d %B %Y"),
             fontsize=7, color="#666666", va="top", ha="right")
@@ -177,30 +177,31 @@ def _draw_methodology(ax: plt.Axes, params: ModelParams) -> None:
     e_rdt  = math.exp(params.r * params.dt)
 
     body = (
-        "Instrument\n"
+        "Instrument:\n"
         "  European floating-strike Asian call. Payoff at maturity T:\n"
         "    Π = max( Sₙ − Ā , 0 )\n"
         "    Ā = arithmetic mean of all Sₜ along the price path\n"
         "\n"
-        "Pricing — CRR Binomial Tree\n"
+        "Pricing — CRR Binomial Tree:\n"
         "  u = exp(σ √Δt)      d = 1/u      Δt = T/n\n"
         "  q = (e^{rΔt} − d) / (u − d)    [risk-neutral prob.]\n"
         "  Price = e^{−rT} × E^Q[ Π ]\n"
         "  Path merging: states with equal (price, cum_sum)\n"
         "  are collapsed, reducing complexity significantly.\n"
         "\n"
-        "Volatility assumption\n"
+        "Volatility assumption:\n"
         "  Backward-looking: daily log-returns computed over the\n"
         "  full historical window (2020–present), std with ddof=1,\n"
         f"  annualised × √250 (M=250 trading days/year, assignment spec).\n"
         f"  σ_daily = {sig_d * 100:.3f}%  →  σ_annual = {params.sigma * 100:.2f}%\n"
         "\n"
-        "Physical vs risk-neutral probability\n"
+        "Physical vs risk-neutral probability:\n"
         "  p = 0.5 (assigned, real-world up-move probability).\n"
         "  Not used in pricing — included for reference only.\n"
         "  Pricing is performed exclusively under Q (risk-neutral).\n"
         "\n"
-        "Risk-free rate\n"
+        "Risk-free rate:\n"
+        f"  the risk-free rate is by default 1%, it can be adjusted.\n"
         f"  r = {params.r * 100:.2f}% p.a. (annual continuous, input).\n"
         f"  Per-step growth factor: e^{{rΔt}} = {e_rdt:.6f}"
     )
