@@ -4,6 +4,17 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime, date
 
+# ── SSL bypass ────────────────────────────────────────────────────────────────
+# yfinance ≥1.0 uses curl_cffi as its HTTP backend; on machines where the
+# system CA bundle doesn't include a corporate proxy cert, every download
+# fails with curl error 60 (SSL certificate problem).  Passing verify=False
+# to the underlying curl_cffi Session disables peer verification.
+try:
+    from curl_cffi import requests as _curl_requests
+    _YF_SESSION = _curl_requests.Session(verify=False)
+except ImportError:
+    _YF_SESSION = None   # fall back to yfinance default (no session override)
+
 # ── constants ────────────────────────────────────────────────────────────────
 # Reference list of well-known tickers — any valid Yahoo Finance symbol works.
 # Full symbol directory: https://finance.yahoo.com/lookup/
@@ -125,6 +136,7 @@ def fetch_prices(
         end=str(end),
         auto_adjust=True,   # gives us adjusted close directly
         progress=False,
+        **( {"session": _YF_SESSION} if _YF_SESSION is not None else {} ),
     )
 
     if raw.empty:
@@ -161,7 +173,8 @@ def fetch_risk_free_rate() -> float:
     Falls back to 0.01 if the fetch fails.
     """
     try:
-        raw = yf.download(RISK_FREE_TICKER, period="5d", progress=False, auto_adjust=True)
+        raw = yf.download(RISK_FREE_TICKER, period="5d", progress=False, auto_adjust=True,
+                          **( {"session": _YF_SESSION} if _YF_SESSION is not None else {} ))
         if isinstance(raw.columns, pd.MultiIndex):
             raw.columns = raw.columns.get_level_values(0)
         latest_yield = float(raw["Close"].dropna().iloc[-1])
