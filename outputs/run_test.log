@@ -1,0 +1,60 @@
+[database] loaded 1587 rows for AAPL
+[calibrate] AAPL | 1586 log-returns | sigma_daily=0.019802 | sigma_annual=0.314351
+
+-- Model Parameters -----------------------------------------
+  Ticker         = AAPL
+  S0             = 267.3636  USD
+  sigma (annual) = 0.314351  (31.4351%)
+  r     (annual) = 0.000200  (0.0200%)
+  T              = 0.5000  years
+  n              = 25  steps
+  dt             = 0.020000  years/step
+  u              = 1.045459
+  d              = 0.956518
+  q  (RN prob)   = 0.488933
+-----------------------------------------------------
+
+  Option Price (binomial) : $13.2892
+  Option Price (approx)   : $13.2188
+  # terminal states       : 946,538
+[calibrate] AAPL | 1586 log-returns | sigma_daily=0.019802 | sigma_annual=0.314351
+[calibrate] AAPL | 1333 log-returns | sigma_daily=0.017389 | sigma_annual=0.276041
+[calibrate] AAPL | 830 log-returns | sigma_daily=0.016000 | sigma_annual=0.253992
+[calibrate] AAPL | 328 log-returns | sigma_daily=0.019256 | sigma_annual=0.305683
+
+-- Robustness (Volatility Window) --
+                window  sigma_pct     price  delta_pct
+  2020–2026 (Baseline)  31.435073 13.289166   0.000000
+2021–2026 (Post-COVID)  27.604077 11.673723 -12.156093
+    2023–2026 (3-Year)  25.399248 10.743405 -19.156667
+    2025–2026 (1-Year)  30.568274 12.923780  -2.749506
+[calibrate] AAPL | 1586 log-returns | sigma_daily=0.019802 | sigma_annual=0.314351
+[calibrate] AAPL | 1586 log-returns | sigma_daily=0.019802 | sigma_annual=0.314351
+[calibrate] AAPL | 1586 log-returns | sigma_daily=0.019802 | sigma_annual=0.314351
+[calibrate] AAPL | 1586 log-returns | sigma_daily=0.019802 | sigma_annual=0.314351
+[calibrate] AAPL | 1586 log-returns | sigma_daily=0.019802 | sigma_annual=0.314351
+[calibrate] AAPL | 1586 log-returns | sigma_daily=0.019802 | sigma_annual=0.314351
+[calibrate] AAPL | 1586 log-returns | sigma_daily=0.019802 | sigma_annual=0.314351
+Traceback (most recent call last):
+  File "C:\Users\antoi\Documents\asian_option_pricer\_run_test.py", line 8, in <module>
+    result = az.run(
+        show_returns=True,
+    ...<8 lines>...
+        output_dir="outputs/",
+    )
+  File "C:\Users\antoi\Documents\asian_option_pricer\AsianOptionAnalyzer.py", line 224, in run
+        print("\n-- Convergence (Steps) --")
+                        ^^^^^^^^^^^^^^^^^^^^
+        print(self._convergence.to_string(index=False))
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    fig = plot_convergence(
+    ^
+  File "C:\Users\antoi\Documents\asian_option_pricer\src\analytics\robustness.py", line 58, in step_convergence
+    result = price_asian_call(params)
+  File "C:\Users\antoi\Documents\asian_option_pricer\src\model\pricer.py", line 10, in price_asian_call
+    def price_asian_call(p: ModelParams) -> dict:
+                  ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\antoi\Documents\asian_option_pricer\src\model\binomial_tree.py", line 44, in enumerate_paths
+    nxt[key] = PathState(new_price, new_cum, new_weight)
+    ~~~^^^^^
+MemoryError
