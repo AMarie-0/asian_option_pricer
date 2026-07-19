@@ -29,27 +29,17 @@ from src.visualization.plots import (
 # ── styling ───────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-  * { font-size: 22px !important; }
-  .metric-label { font-size: 13px; color: #666; text-transform: uppercase; letter-spacing: .06em; }
-  .metric-value { font-size: 36px !important; font-weight: 700; color: #1a3a5c; margin-top: 4px; }
-  .metric-sub { font-size: 13px; color: #999; margin-top: 3px; }
-  .section-header {
-    font-size: 20px !important; font-weight: 700; color: #2e6da4;
-    text-transform: uppercase; letter-spacing: .08em;
-    border-bottom: 2px solid #2e6da4; padding-bottom: 5px;
-    margin: 28px 0 14px;
-  }
-  .note-box {
-    background: #eef4fb; border-left: 3px solid #2e6da4;
-    padding: 12px 16px; border-radius: 4px;
-    font-size: 22px !important; color: #333; margin: 10px 0;
-    line-height: 1.6;
-  }
-  button[data-baseweb="tab"] {
-    font-size: 22px !important;
-    font-weight: 600 !important;
-    padding: 12px 28px !important;
-  }
+  .metric-box { background:#f7f9fc; border-radius:8px; padding:16px 20px; margin-bottom:8px; }
+  .metric-label { font-size:12px; color:#666; text-transform:uppercase; letter-spacing:.05em; }
+  .metric-value { font-size:28px; font-weight:700; color:#1a3a5c; margin-top:4px; }
+  .metric-sub   { font-size:11px; color:#999; margin-top:2px; }
+  .section-header { font-size:13px; font-weight:600; color:#2e6da4;
+                    text-transform:uppercase; letter-spacing:.08em;
+                    border-bottom:2px solid #2e6da4; padding-bottom:4px;
+                    margin:24px 0 12px; }
+  .note-box { background:#eef4fb; border-left:3px solid #2e6da4;
+              padding:10px 14px; border-radius:4px;
+              font-size:13px; color:#333; margin:8px 0; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -259,35 +249,35 @@ with tab1:
 with tab2:
     sigma_daily = params.sigma / math.sqrt(250)
 
-    section("Historical Data")
-    st.plotly_chart(plot_price_series(df, ticker), use_container_width=True, key="t2_price")
-    st.plotly_chart(plot_log_returns(df, ticker, sigma_daily), use_container_width=True, key="t2_returns")
+    with st.expander("📈 Historical Data", expanded=True):
+        st.plotly_chart(plot_price_series(df, ticker), use_container_width=True, key="t2_price")
+        st.plotly_chart(plot_log_returns(df, ticker, sigma_daily), use_container_width=True, key="t2_returns")
 
-    section("Binomial Tree")
-    st.plotly_chart(plot_binomial_tree(params, k=5), use_container_width=True, key="t2_tree")
-    note("The tree recombines — S₀·u·d = S₀·d·u = S₀ — reducing distinct nodes at step i "
-         "from 2ⁱ to i+1. This is efficient for vanilla options but insufficient for "
-         "path-dependent options like this Asian call (see Methodology tab).")
+    with st.expander("🌲 Binomial Tree", expanded=True):
+        st.plotly_chart(plot_binomial_tree(params, k=5), use_container_width=True, key="t2_tree")
+        note("The tree recombines — S₀·u·d = S₀·d·u = S₀ — reducing distinct nodes at step i "
+             "from 2ⁱ to i+1. This is efficient for vanilla options but insufficient for "
+             "path-dependent options like this Asian call (see Methodology tab).")
 
-    section("Terminal Price Distribution")
-    st.plotly_chart(plot_terminal_distribution(params), use_container_width=True, key="t2_terminal")
+    with st.expander("📊 Terminal Price Distribution", expanded=False):
+        st.plotly_chart(plot_terminal_distribution(params), use_container_width=True, key="t2_terminal")
 
-    section("Path Distribution (Path-Dependence)")
-    ca, cb = st.columns(2)
-    with ca:
-        st.plotly_chart(plot_average_distribution(result), use_container_width=True, key="t2_avg")
-    with cb:
-        st.plotly_chart(plot_payoff_distribution(result), use_container_width=True, key="t2_payoff")
+    with st.expander("📉 Path Distribution (Path-Dependence)", expanded=False):
+        ca, cb = st.columns(2)
+        with ca:
+            st.plotly_chart(plot_average_distribution(result), use_container_width=True, key="t2_avg")
+        with cb:
+            st.plotly_chart(plot_payoff_distribution(result), use_container_width=True, key="t2_payoff")
 
-    zero_pct = (result['payoffs'] == 0).mean() * 100
-    note(
-        f"The average distribution S̄ₙ is narrower than the terminal price distribution — "
-        f"averaging dampens extremes. The payoff distribution has "
-        f"{zero_pct:.1f}% of paths expiring worthless, "
-        f"with the mean payoff of ${result['expected_payoff_p']:.2f} driven by a small number "
-        f"of high-payoff paths in the right tail."
-    )
-    st.plotly_chart(plot_payoff_vs_terminal(result), use_container_width=True, key="t2_scatter")
+        zero_pct = (result['payoffs'] == 0).mean() * 100
+        note(
+            f"The average distribution S̄ₙ is narrower than the terminal price distribution — "
+            f"averaging dampens extremes. The payoff distribution has "
+            f"{zero_pct:.1f}% of paths expiring worthless, "
+            f"with the mean payoff of ${result['expected_payoff_p']:.2f} driven by a small number "
+            f"of high-payoff paths in the right tail."
+        )
+        st.plotly_chart(plot_payoff_vs_terminal(result, n_sample=20_000), use_container_width=True, key="t2_scatter")
 
 
 # ═══════════════════════════════════════════════════════════
