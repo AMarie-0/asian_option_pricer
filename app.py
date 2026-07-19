@@ -361,14 +361,14 @@ with tab4:
     st.markdown(
         "Log returns are preferred over simple returns for three reasons: temporal additivity "
         "(they sum across periods), approximate normality under GBM, and consistency with the "
-        "CRR parametrisation where $u = e^{\sigma\sqrt{\Delta t}}$."
+        r"CRR parametrisation where $u = e^{\sigma\sqrt{\Delta t}}$."
     )
 
     section("3. Binomial Tree Construction")
     st.markdown("The Cox-Ross-Rubinstein (CRR) parametrisation:")
     st.latex(r"u = e^{\sigma\sqrt{\Delta t}}, \quad d = \frac{1}{u}, \quad \Delta t = \frac{T}{n}")
     st.markdown(
-        "The tree **recombines** since $u \cdot d = 1$, meaning an up-move followed by a "
+        "The tree **recombines** since $u \\cdot d = 1$, meaning an up-move followed by a "
         "down-move returns to the same price as the reverse sequence:"
     )
     st.latex(r"S_0 \cdot u \cdot d = S_0 \cdot d \cdot u = S_0")
@@ -379,7 +379,7 @@ with tab4:
 
     section("4. Why the Standard Tree Fails Here")
     st.markdown(
-        "For a vanilla European call, the payoff $\max(S_n - K, 0)$ depends only on the "
+        r"For a vanilla European call, the payoff $\max(S_n - K, 0)$ depends only on the "
         "terminal price $S_n$, which is fully determined by the number of up-moves $j$. "
         "All paths with the same $j$ produce the same payoff — so they can be grouped using "
         "the binomial coefficient, giving an $O(n)$ computation."
@@ -396,7 +396,7 @@ with tab4:
     section("5. Augmented State Space & Forward Enumeration")
     st.markdown(
         "The key insight is that we do not need to store the full path history. "
-        "It suffices to track the **cumulative sum** $C_t = \sum_{s=0}^{t} S_s$ alongside "
+        "It suffices to track the **cumulative sum** $C_t = \\sum_{s=0}^{t} S_s$ alongside "
         "the stock price, since it satisfies a simple one-step recursion:"
     )
     st.latex(r"C_t = C_{t-1} + S_t, \quad C_0 = S_0")
@@ -407,7 +407,7 @@ with tab4:
     st.latex(r"\bar{S}_n = \frac{C_n}{n+1}")
     st.markdown(
         "We enumerate all $2^n$ paths by propagating three numpy arrays $(S, C, w)$ forward, "
-        "branching at each step into $[\text{up} \mid \text{down}]$ — one entry per path. "
+        r"branching at each step into $[\text{up} \mid \text{down}]$ — one entry per path. "
         "At $n=25$ this yields exactly $2^{25} = 33{,}554{,}432$ paths. "
         "See **Model → Path Distribution** for the resulting payoff and average distributions."
     )
@@ -422,7 +422,7 @@ with tab4:
     st.markdown("The arbitrage-free price is the discounted risk-neutral expectation:")
     st.latex(r"V_0 = \frac{1}{(1+r\,\Delta t)^n}\,\mathbb{E}^Q[A_T] = \frac{1}{(1+r\,\Delta t)^n} \sum_\omega q^{j(\omega)}(1-q)^{n-j(\omega)}\max\!\left(S_n(\omega)-\bar{S}_n(\omega),0\right)")
     st.markdown(
-        "The $[\text{up} \mid \text{down}]$ concatenation order in the forward pass means "
+        r"The $[\text{up} \mid \text{down}]$ concatenation order in the forward pass means "
         "that at every backward step, position $i$ in the first half and position $i$ in the "
         "second half are the up/down children of the same parent. Backward induction then folds "
         "the $2^n$ payoff vector in half $n$ times with pure vectorised arithmetic:"
@@ -437,29 +437,29 @@ with tab4:
 
     section("7. Normal Approximation")
     st.markdown(
-        "As an independent cross-check we approximate $D_n = S_n - \bar{S}_n$ as normally "
-        "distributed. Linearising $S_t \approx S_0(1 + \sigma\sqrt{\Delta t}\,W_t)$ and "
-        "using the covariance structure of the random walk $W_t$, the analytical variance is:"
+        r"As an independent cross-check we approximate $D_n = S_n - \bar{S}_n$ as normally "
+        r"distributed. Linearising $S_t \approx S_0(1 + \sigma\sqrt{\Delta t}\,W_t)$ and "
+        r"using the covariance structure of the random walk $W_t$, the analytical variance is:"
     )
     st.latex(r"\operatorname{Var}(D_n) = S_0^2\,\sigma^2\,T\,\frac{2n+1}{6(n+1)} \xrightarrow{n\to\infty} \frac{S_0^2\sigma^2 T}{3}")
     st.markdown(
-        "With $E[D_n] \approx 0$ under $p=0.5$, the expected positive part of a $N(0,v^2)$ "
-        "variable is $v/\sqrt{2\pi}$, giving the closed-form price:"
+        r"With $E[D_n] \approx 0$ under $p=0.5$, the expected positive part of a $N(0,v^2)$ "
+        r"variable is $v/\sqrt{2\pi}$, giving the closed-form price:"
     )
     st.latex(r"V_0^{\text{approx}} = e^{-rT}\,\frac{\sqrt{\operatorname{Var}(D_n)}}{\sqrt{2\pi}}")
     st.markdown(
-        "Even as $n \to \infty$, $V_0^{\text{approx}}$ converges to its own asymptote "
-        "rather than to the exact binomial price. The **permanent gap** has two sources:"
+        r"Even as $n \to \infty$, $V_0^{\text{approx}}$ converges to its own asymptote "
+        r"rather than to the exact binomial price. The **permanent gap** has two sources:"
     )
-    st.markdown("""
+    st.markdown(r"""
 - **Probability measure**: the approximation uses $p=0.5$ rather than the risk-neutral $q$
-- **Discounting**: continuous $e^{-rT}$ rather than discrete $(1+r\Delta t)^n$
+- **Discounting**: continuous $e^{{-rT}}$ rather than discrete $(1+r\\Delta t)^n$
 
 Both effects persist regardless of $n$. See **Robustness → Normal Approximation Convergence** for the chart.
 """)
 
     section("Model Limitations")
-    st.markdown("""
+    st.markdown(r"""
 - **σ is estimated, not observed.** The price ranges from ~15% depending on the estimation window
   (see **Robustness → Volatility Window Sensitivity**). Implied volatility from traded options
   would give a forward-looking, market-consistent alternative.
@@ -467,7 +467,7 @@ Both effects persist regardless of $n$. See **Robustness → Normal Approximatio
   Convergence of the normal approximation is confirmed in the Robustness tab.
 - **No dividends.** Adjusted prices correct for splits but the model does not explicitly
   model the continuous dividend yield $q_d$.
-- **Simple discrete discounting.** We use $R = 1 + r\Delta t$ matching the standard
+- **Simple discrete discounting.** We use $R = 1 + r\\Delta t$ matching the standard
   discrete binomial convention. The normal approximation uses $e^{-rT}$ (continuous limit),
   which explains part of the gap between the two methods.
 """)
