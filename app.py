@@ -13,7 +13,11 @@ st.set_page_config(
     layout="wide",
 )
 
-# ── debug import trap ─────────────────────────────────────────────────────────
+# ── memory guard: cap n on Cloud (free tier = 1GB RAM, n=25 needs ~800MB) ────
+import os
+ON_CLOUD = os.environ.get("HOME") == "/home/adminuser"
+MAX_N    = 20 if ON_CLOUD else 25
+
 try:
     from data.fetch import fetch_prices, fetch_risk_free_rate, SUPPORTED_TICKERS
     from src.model.calibration import calibrate
@@ -133,7 +137,7 @@ with st.sidebar:
 
     st.subheader("Model Parameters")
     T = st.slider("Maturity T (years)", 0.25, 2.0, 0.5, 0.25)
-    n = st.slider("Binomial steps n", 5, 25, 25, 5)
+    n = st.slider("Binomial steps n", 5, MAX_N, MAX_N, 5)
 
     use_live_r = st.checkbox("Fetch live risk-free rate (^IRX)", value=False)
     if use_live_r:
