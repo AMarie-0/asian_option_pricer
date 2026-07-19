@@ -33,7 +33,7 @@ st.markdown("""
   .metric-label { font-size:12px; color:#666; text-transform:uppercase; letter-spacing:.05em; }
   .metric-value { font-size:28px; font-weight:700; color:#1a3a5c; margin-top:4px; }
   .metric-sub   { font-size:11px; color:#999; margin-top:2px; }
-  .section-header { font-size:14px; font-weight:600; color:#2e6da4;
+  .section-header { font-size:13px; font-weight:600; color:#2e6da4;
                     text-transform:uppercase; letter-spacing:.08em;
                     border-bottom:2px solid #2e6da4; padding-bottom:4px;
                     margin:24px 0 12px; }
