@@ -14,7 +14,11 @@ st.set_page_config(
 )
 
 from data.fetch import fetch_prices, fetch_risk_free_rate, SUPPORTED_TICKERS
-from data.database import save_prices, load_prices
+try:
+    from data.database import save_prices, load_prices
+    DB_AVAILABLE = True
+except Exception:
+    DB_AVAILABLE = False
 from src.model.calibration import calibrate
 from src.model.pricer import price_asian_call
 from src.analytics.approximation import normal_approximation_price, empirical_Dn_stats
@@ -62,15 +66,18 @@ def note(text):
 @st.cache_data(show_spinner=False, ttl=3600)
 def get_prices(ticker: str) -> pd.DataFrame:
     """Fetch and cache prices for 1 hour."""
-    try:
-        return load_prices(ticker, db_path="data/prices.duckdb")
-    except Exception:
-        df = fetch_prices(ticker)
+    if DB_AVAILABLE:
+        try:
+            return load_prices(ticker, db_path="data/prices.duckdb")
+        except Exception:
+            pass
+    df = fetch_prices(ticker)
+    if DB_AVAILABLE:
         try:
             save_prices(df, ticker, db_path="data/prices.duckdb")
         except Exception:
             pass
-        return df
+    return df
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def get_risk_free_rate() -> float:
