@@ -13,22 +13,29 @@ st.set_page_config(
     layout="wide",
 )
 
-from data.fetch import fetch_prices, fetch_risk_free_rate, SUPPORTED_TICKERS
+# ── debug import trap ─────────────────────────────────────────────────────────
 try:
-    from data.database import save_prices, load_prices
-    DB_AVAILABLE = True
-except Exception:
-    DB_AVAILABLE = False
-from src.model.calibration import calibrate
-from src.model.pricer import price_asian_call
-from src.analytics.approximation import normal_approximation_price, empirical_Dn_stats
-from src.analytics.robustness import volatility_window_sensitivity, normal_approx_convergence
-from src.visualization.plots import (
-    plot_price_series, plot_log_returns, plot_binomial_tree,
-    plot_terminal_distribution, plot_average_distribution,
-    plot_payoff_distribution, plot_payoff_vs_terminal,
-    plot_window_sensitivity, plot_approx_convergence,
-)
+    from data.fetch import fetch_prices, fetch_risk_free_rate, SUPPORTED_TICKERS
+    from src.model.calibration import calibrate
+    from src.model.pricer import price_asian_call
+    from src.analytics.approximation import normal_approximation_price, empirical_Dn_stats
+    from src.analytics.robustness import volatility_window_sensitivity, normal_approx_convergence
+    from src.visualization.plots import (
+        plot_price_series, plot_log_returns, plot_binomial_tree,
+        plot_terminal_distribution, plot_average_distribution,
+        plot_payoff_distribution, plot_payoff_vs_terminal,
+        plot_window_sensitivity, plot_approx_convergence,
+    )
+    try:
+        from data.database import save_prices, load_prices
+        DB_AVAILABLE = True
+    except Exception:
+        DB_AVAILABLE = False
+except Exception as e:
+    import traceback
+    st.error(f"Import error: {e}")
+    st.code(traceback.format_exc())
+    st.stop()
 
 # ── styling ───────────────────────────────────────────────────────────────────
 st.markdown("""
