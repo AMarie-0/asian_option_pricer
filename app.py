@@ -137,7 +137,7 @@ with st.sidebar:
 
     st.subheader("Model Parameters")
     T = st.slider("Maturity T (years)", 0.25, 2.0, 0.5, 0.25)
-    n = st.slider("Binomial steps n", 5, MAX_N, MAX_N, 5)
+    n = st.slider("Binomial steps n", 5, 20, 20, 5)
 
     use_live_r = st.checkbox("Fetch live risk-free rate (^IRX)", value=False)
     if use_live_r:
