@@ -30,16 +30,16 @@ from src.visualization.plots import (
 st.markdown("""
 <style>
   .metric-box { background:#f7f9fc; border-radius:8px; padding:16px 20px; margin-bottom:8px; }
-  .metric-label { font-size:16px; color:#666; text-transform:uppercase; letter-spacing:.05em; }
-  .metric-value { font-size:32px; font-weight:700; color:#1a3a5c; margin-top:4px; }
-  .metric-sub   { font-size:15px; color:#999; margin-top:2px; }
-  .section-header { font-size:18px; font-weight:600; color:#2e6da4;
+  .metric-label { font-size:18px; color:#666; text-transform:uppercase; letter-spacing:.05em; }
+  .metric-value { font-size:34px; font-weight:700; color:#1a3a5c; margin-top:4px; }
+  .metric-sub   { font-size:17px; color:#999; margin-top:2px; }
+  .section-header { font-size:20px; font-weight:600; color:#2e6da4;
                     text-transform:uppercase; letter-spacing:.08em;
                     border-bottom:2px solid #2e6da4; padding-bottom:4px;
                     margin:24px 0 12px; }
   .note-box { background:#eef4fb; border-left:3px solid #2e6da4;
               padding:10px 14px; border-radius:4px;
-              font-size:17px; color:#333; margin:8px 0; }
+              font-size:19px; color:#333; margin:8px 0; }
 </style>
 """, unsafe_allow_html=True)
 
