@@ -34,6 +34,11 @@ try:
         plot_window_sensitivity, plot_approx_convergence,
     )
     from src.options.registry import REGISTRY, by_category
+    from src.analytics.greeks import (compute_greeks, black_scholes_greeks,
+                                      greeks_profile)
+    from src.analytics.vol_surface import (fetch_vol_surface, surface_grid,
+                                           skew_summary)
+    from src.model.monte_carlo import MC_PRICERS, estimate_memory_mb
     try:
         from data.database import save_prices, load_prices
         DB_AVAILABLE = True
@@ -575,6 +580,457 @@ choice date premium is the key differentiator from a plain straddle.
 PAYOFF_LATEX = {k: v["payoff_tex"] for k, v in METHODOLOGY.items()}
 
 
+# ══════════════════════════════════════════════════════════════════════
+# GREEKS / VOL SURFACE / MONTE CARLO — cached runners + tab renderers
+# ══════════════════════════════════════════════════════════════════════
+@st.cache_data(show_spinner=False)
+def run_greeks(spec_key, ticker, r, T, n, vol_window, inputs_items):
+    df     = get_prices(ticker)
+    params = calibrate(df, ticker, r=r, T=T, n=n, volatility_window=vol_window)
+    return compute_greeks(params, REGISTRY[spec_key].price, dict(inputs_items))
+
+@st.cache_data(show_spinner=False)
+def run_greeks_profile(spec_key, ticker, r, T, n, vol_window, inputs_items, n_points):
+    df     = get_prices(ticker)
+    params = calibrate(df, ticker, r=r, T=T, n=n, volatility_window=vol_window)
+    return greeks_profile(params, REGISTRY[spec_key].price,
+                          dict(inputs_items), n_points=n_points)
+
+@st.cache_data(show_spinner=False, ttl=900)
+def run_vol_surface(ticker, r, kind, max_expiries):
+    return fetch_vol_surface(ticker, r=r, kind=kind, max_expiries=max_expiries)
+
+@st.cache_data(show_spinner=False)
+def run_monte_carlo(spec_key, ticker, r, T, n_steps, vol_window,
+                    inputs_items, n_paths, antithetic, seed):
+    df     = get_prices(ticker)
+    params = calibrate(df, ticker, r=r, T=T, n=n_steps, volatility_window=vol_window)
+    res = MC_PRICERS[spec_key](params, n_paths=n_paths, n_steps=n_steps,
+                               antithetic=antithetic, seed=seed,
+                               **dict(inputs_items))
+    res.pop("payoffs", None)   # keep the cache small
+    return res
+
+
+def render_greeks_tab(spec, params, result, extra_inputs, ticker,
+                      r, T, n, vol_window, key_prefix="g"):
+    """Greeks tab — works for every option in the registry."""
+    section("Sensitivities (Greeks)")
+
+    if spec.engine == "paths":
+        warn(f"This option uses the O(2ⁿ) path engine. Each Greek needs a "
+             f"re-pricing, so the full set costs ~7 × the base run. "
+             f"Consider a lower n while exploring.")
+
+    with st.spinner("Computing Greeks (7 re-pricings)..."):
+        try:
+            g = run_greeks(spec.key, ticker, r, T, n, vol_window,
+                           tuple(sorted(extra_inputs.items())))
+        except Exception as e:
+            st.error(f"Greeks failed: {e}")
+            return
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        metric("Delta  Δ", f"{g['delta']:+.4f}", "per $1 of spot")
+    with c2:
+        metric("Gamma  Γ", f"{g['gamma']:+.5f}", "Δ change per $1")
+    with c3:
+        metric("Vega  ν", f"{g['vega']:+.4f}", "per 1 vol point")
+    with c4:
+        theta_txt = "n/a" if not np.isfinite(g["theta"]) else f"{g['theta']:+.4f}"
+        metric("Theta  Θ", theta_txt, "per calendar day")
+    with c5:
+        metric("Rho  ρ", f"{g['rho']:+.4f}", "per 1 rate point")
+
+    # Analytical cross-check for the vanillas
+    if spec.key in ("euro_call", "euro_put"):
+        K    = result.get("strike", params.S0)
+        kind = "call" if "call" in spec.key else "put"
+        bs   = black_scholes_greeks(params, K, kind)
+        st.markdown("")
+        section("Binomial vs Black–Scholes (closed form)")
+        comp = pd.DataFrame({
+            "Greek":        ["Delta", "Gamma", "Vega", "Theta", "Rho"],
+            "Binomial":     [f"{g['delta']:+.5f}", f"{g['gamma']:+.6f}",
+                             f"{g['vega']:+.5f}", f"{g['theta']:+.5f}",
+                             f"{g['rho']:+.5f}"],
+            "Black–Scholes":[f"{bs['delta']:+.5f}", f"{bs['gamma']:+.6f}",
+                             f"{bs['vega']:+.5f}", f"{bs['theta']:+.5f}",
+                             f"{bs['rho']:+.5f}"],
+            "Abs. diff":    [f"{abs(g[k]-bs[k]):.2e}"
+                             for k in ["delta","gamma","vega","theta","rho"]],
+        }).set_index("Greek")
+        st.dataframe(comp, use_container_width=True)
+        note("The binomial Greeks are finite differences (bump-and-reprice); "
+             "Black–Scholes values are analytic derivatives of the closed form. "
+             "They agree to well under 1% — the residual is discretisation error "
+             "that shrinks as n grows. Gamma uses a wider bump than delta because "
+             "the lattice value is piecewise-linear in spot between adjacent nodes, "
+             "so a narrow second difference reads lattice sawtooth rather than "
+             "true curvature.")
+
+    # Delta / gamma profile across spot
+    section("Delta & Gamma vs Spot")
+    max_pts = 9 if spec.engine == "paths" else 25
+    n_pts   = st.slider("Grid resolution", 5, max_pts, min(15, max_pts), 2,
+                        key=f"{key_prefix}_gpts")
+    with st.spinner(f"Sweeping spot ({n_pts * 3} re-pricings)..."):
+        try:
+            prof = run_greeks_profile(spec.key, ticker, r, T, n, vol_window,
+                                      tuple(sorted(extra_inputs.items())), n_pts)
+        except Exception as e:
+            st.error(f"Profile failed: {e}")
+            return
+
+    K_ref = result.get("strike")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=prof["spots"], y=prof["deltas"], mode="lines+markers", name="Delta",
+        line=dict(color=BLUE_MID, width=2.5), marker=dict(size=5),
+        hovertemplate="S=$%{x:.2f}<br>Δ=%{y:.4f}<extra></extra>"))
+    fig.add_trace(go.Scatter(
+        x=prof["spots"], y=prof["gammas"], mode="lines+markers", name="Gamma",
+        line=dict(color="#7ba7d4", width=2, dash="dot"), marker=dict(size=4),
+        yaxis="y2", hovertemplate="S=$%{x:.2f}<br>Γ=%{y:.5f}<extra></extra>"))
+    fig.add_vline(x=params.S0, line=dict(color=BLUE_DARK, width=1.5))
+    fig.add_annotation(x=params.S0, y=1, yref="paper", yanchor="bottom",
+                       text=f"S₀=${params.S0:.0f}", showarrow=False,
+                       font=dict(size=10, color=BLUE_DARK))
+    if K_ref:
+        fig.add_vline(x=K_ref, line=dict(color="#7a9ab8", width=1, dash="dash"))
+        fig.add_annotation(x=K_ref, y=1, yref="paper", yanchor="bottom",
+                           text=f"K=${K_ref:.0f}", showarrow=False,
+                           font=dict(size=10, color="#5a7a99"))
+    fig.update_layout(
+        title="Delta (left axis) and Gamma (right axis) across spot",
+        xaxis=dict(title="Spot price", tickprefix="$", gridcolor="#e8f0f8"),
+        yaxis=dict(title="Delta", gridcolor="#e8f0f8"),
+        yaxis2=dict(title="Gamma", overlaying="y", side="right", showgrid=False),
+        plot_bgcolor="white", paper_bgcolor="white",
+        legend=dict(orientation="h", y=-0.2), height=440,
+    )
+    st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_greek_prof")
+    note("<b>Delta</b> traces the familiar S-curve: near 0 deep out-of-the-money, "
+         "near ±1 deep in-the-money, passing through the strike region in between. "
+         "<b>Gamma</b> peaks around the strike — that is where delta changes fastest, "
+         "and where a hedged position needs the most frequent re-balancing. "
+         "Gamma is the practical reason option desks re-hedge continuously.")
+
+
+def render_vol_surface_tab(ticker, params, r, key_prefix="g"):
+    """Implied volatility surface fetched live from the options chain."""
+    section("Live Implied Volatility Surface")
+    note("The model prices with a <b>single constant σ</b> from historical returns. "
+         "The market implies a different σ for every strike and expiry. This tab "
+         "fetches the live options chain, inverts Black–Scholes per quote, and plots "
+         "the resulting surface against the flat σ this model assumes.")
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        opt_kind = st.radio("Chain", ["call", "put"], horizontal=True,
+                            key=f"{key_prefix}_vskind")
+    with c2:
+        n_exp = st.slider("Expiries to fetch", 3, 12, 6, 1,
+                          key=f"{key_prefix}_vsexp")
+
+    if not st.button("🔄 Fetch surface", key=f"{key_prefix}_vsbtn",
+                     use_container_width=True):
+        st.info("Click **Fetch surface** to pull the live options chain. "
+                "Cached for 15 minutes.")
+        return
+
+    with st.spinner(f"Fetching {ticker} option chains..."):
+        try:
+            vs = run_vol_surface(ticker, r, opt_kind, n_exp)
+        except Exception as e:
+            st.error(f"Could not fetch options data: {e}")
+            return
+
+    if vs.empty:
+        warn(f"No usable option quotes found for <b>{ticker}</b>. This happens when "
+             "the ticker has no listed options, the market is closed with stale "
+             "quotes, or every quote failed the liquidity filter (zero bid, no "
+             "volume, or spread wider than 60%). Liquid US large-caps such as "
+             "AAPL, MSFT, SPY, NVDA work best.")
+        return
+
+    spot = vs.attrs.get("spot", params.S0)
+    sk   = skew_summary(vs)
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        metric("Quotes Used", f"{len(vs):,}", f"{vs['expiry'].nunique()} expiries")
+    with c2:
+        metric("Live Spot", f"${spot:.2f}", "from options chain")
+    with c3:
+        metric("Model σ (historical)", f"{params.sigma*100:.2f}%", "flat across surface")
+    with c4:
+        atm = vs.iloc[(vs["moneyness"] - 1.0).abs().argsort()[:5]]["implied_vol"].mean()
+        metric("Market ATM IV", f"{atm*100:.2f}%",
+               f"{(atm-params.sigma)*100:+.2f} pts vs model")
+
+    # 3D surface
+    MM, TT, IV = surface_grid(vs)
+    if MM is not None:
+        fig = go.Figure(go.Surface(
+            x=MM, y=TT, z=IV * 100, colorscale="Blues", opacity=0.92,
+            colorbar=dict(title="IV (%)", thickness=14),
+            hovertemplate="Moneyness %{x:.2f}<br>T %{y:.2f}y<br>IV %{z:.1f}%<extra></extra>",
+        ))
+        flat = np.full_like(IV, params.sigma * 100)
+        fig.add_trace(go.Surface(
+            x=MM, y=TT, z=flat, showscale=False, opacity=0.28,
+            colorscale=[[0, "#c0392b"], [1, "#c0392b"]],
+            hovertemplate=f"Model flat σ = {params.sigma*100:.2f}%<extra></extra>",
+        ))
+        fig.update_layout(
+            title="Implied volatility surface vs the model's flat σ (red plane)",
+            scene=dict(
+                xaxis=dict(title="Moneyness K/S₀", backgroundcolor="#f7fafd"),
+                yaxis=dict(title="Maturity (years)", backgroundcolor="#f7fafd"),
+                zaxis=dict(title="Implied vol (%)", backgroundcolor="#f7fafd"),
+                camera=dict(eye=dict(x=1.6, y=-1.5, z=0.8)),
+            ),
+            height=620, margin=dict(l=0, r=0, t=50, b=0),
+        )
+        st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_vs3d")
+    else:
+        warn("Not enough distinct expiries to interpolate a 3D surface — "
+             "showing the 2D smile only.")
+
+    # 2D smile per expiry
+    section("Volatility Smile by Expiry")
+    fig2 = go.Figure()
+    expiries = sorted(vs["expiry"].unique())
+    for i, exp in enumerate(expiries):
+        sl = vs[vs["expiry"] == exp].sort_values("moneyness")
+        shade = 0.30 + 0.65 * (i / max(len(expiries) - 1, 1))
+        fig2.add_trace(go.Scatter(
+            x=sl["moneyness"], y=sl["implied_vol"] * 100,
+            mode="lines+markers", name=f"{exp} ({sl['T'].iloc[0]:.2f}y)",
+            line=dict(color=f"rgba(26,95,168,{shade})", width=2),
+            marker=dict(size=5),
+        ))
+    fig2.add_hline(y=params.sigma * 100,
+                   line=dict(color="#c0392b", width=2, dash="dash"),
+                   annotation_text=f"Model σ = {params.sigma*100:.2f}%",
+                   annotation_position="right")
+    fig2.add_vline(x=1.0, line=dict(color="#7a9ab8", width=1, dash="dot"),
+                   annotation_text="ATM", annotation_position="top")
+    fig2.update_layout(
+        title=f"{ticker} implied volatility smile ({opt_kind}s)",
+        xaxis=dict(title="Moneyness (K / S₀)", gridcolor="#e8f0f8"),
+        yaxis=dict(title="Implied volatility (%)", ticksuffix="%",
+                   gridcolor="#e8f0f8"),
+        plot_bgcolor="white", paper_bgcolor="white",
+        legend=dict(orientation="h", y=-0.25), height=460,
+    )
+    st.plotly_chart(fig2, use_container_width=True, key=f"{key_prefix}_vs2d")
+
+    if sk:
+        skew_pts = sk["skew"] * 100
+        direction = ("Downside protection is bid — the classic equity skew"
+                     if skew_pts > 0 else
+                     "Unusual: upside vol exceeds downside (check data quality)")
+        note(
+            f"<b>Skew (nearest expiry, T={sk['expiry_T']:.2f}y)</b>: "
+            f"IV at {sk['m_90']:.2f} moneyness = {sk['iv_90']*100:.2f}%, "
+            f"at {sk['m_110']:.2f} = {sk['iv_110']*100:.2f}% "
+            f"→ skew of <b>{skew_pts:+.2f} vol points</b>. {direction}. "
+            f"A single-σ model prices every strike off one number and therefore "
+            f"cannot reproduce this shape — it will misprice wings relative to the market."
+        )
+
+    with st.expander("📋 Raw quotes"):
+        st.dataframe(
+            vs[["expiry", "T", "strike", "moneyness", "mid_price",
+                "implied_vol", "volume", "open_interest"]]
+            .assign(implied_vol=lambda d: (d["implied_vol"] * 100).round(2))
+            .rename(columns={"implied_vol": "IV (%)", "T": "T (yrs)",
+                             "mid_price": "Mid $"}),
+            use_container_width=True, height=300)
+
+
+def render_mc_tab(spec, params, result, extra_inputs, ticker,
+                  r, T, vol_window, key_prefix="g"):
+    """Monte Carlo tab — alternative engine, breaks the 2ⁿ ceiling."""
+    section("Monte Carlo Simulation")
+
+    if spec.key not in MC_PRICERS:
+        st.info(f"Monte Carlo is not implemented for **{spec.name}**. "
+                "Available for: European call/put, both Asian variants, "
+                "lookback, and the up-and-out barrier.")
+        return
+
+    note("Monte Carlo simulates the risk-neutral GBM directly rather than "
+         "enumerating a tree. Cost is O(N × steps) instead of O(2ⁿ), so daily "
+         "monitoring (n = 252) becomes feasible where exact enumeration would "
+         "need 2²⁵² paths. The trade-off: the price carries a sampling error, "
+         "shown below as a 95% confidence interval.")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        n_paths = st.select_slider(
+            "Paths", options=[10_000, 25_000, 50_000, 100_000, 250_000, 500_000],
+            value=100_000, key=f"{key_prefix}_mcpaths")
+    with c2:
+        n_steps = st.select_slider(
+            "Monitoring steps", options=[12, 25, 50, 100, 252],
+            value=252, key=f"{key_prefix}_mcsteps",
+            help="252 ≈ daily monitoring over one trading year")
+    with c3:
+        antithetic = st.checkbox("Antithetic variates", value=True,
+                                 key=f"{key_prefix}_mcanti",
+                                 help="Pairs each path with its mirror (−Z) "
+                                      "to cut variance for free")
+
+    mem = estimate_memory_mb(n_paths, n_steps)
+    st.caption(f"Simulation is chunked; peak memory stays bounded regardless "
+               f"of path count (unchunked this run would need ~{mem:.0f} MB).")
+
+    if not st.button("▶ Run simulation", key=f"{key_prefix}_mcbtn",
+                     use_container_width=True, type="primary"):
+        st.info("Configure and click **Run simulation**.")
+        return
+
+    mc_inputs = {k: v for k, v in extra_inputs.items() if k != "choice_fraction"}
+    with st.spinner(f"Simulating {n_paths:,} paths × {n_steps} steps..."):
+        try:
+            mc = run_monte_carlo(spec.key, ticker, r, T, n_steps, vol_window,
+                                 tuple(sorted(mc_inputs.items())),
+                                 n_paths, antithetic, 42)
+        except Exception as e:
+            st.error(f"Simulation failed: {e}")
+            return
+
+    tree_price = result["price"]
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        metric("Monte Carlo Price", f"${mc['price']:.4f}",
+               f"{mc['n_paths']:,} paths × {mc['n_steps']} steps")
+    with c2:
+        metric("95% Confidence Interval",
+               f"${mc['ci_low']:.4f} – ${mc['ci_high']:.4f}",
+               f"± ${1.96*mc['std_error']:.4f}")
+    with c3:
+        metric("Binomial (tree) Price", f"${tree_price:.4f}",
+               f"n = {params.n} steps")
+    with c4:
+        inside = mc["ci_low"] <= tree_price <= mc["ci_high"]
+        metric("Tree inside MC CI?", "✓ Yes" if inside else "✗ No",
+               f"gap = ${abs(tree_price - mc['price']):.4f}")
+
+    if mc.get("control_variate"):
+        note(
+            f"<b>Geometric control variate applied.</b> The geometric-average "
+            f"Asian option has a closed form (${mc['geometric_exact']:.4f}) and is "
+            f"highly correlated with the arithmetic one, so its known error corrects "
+            f"the estimate. Standard error fell from "
+            f"{mc['std_error_naive']:.5f} to {mc['std_error']:.5f} — a "
+            f"<b>{mc['variance_reduction']:.1f}× variance reduction</b> "
+            f"(β = {mc['beta']:.3f}). Matching that by brute force would need "
+            f"~{mc['variance_reduction']**2:.0f}× more paths."
+        )
+
+    if not (mc["ci_low"] <= tree_price <= mc["ci_high"]):
+        warn(
+            "The tree price sits outside the MC confidence interval. This is "
+            "usually <b>not</b> a bug: the tree discounts with (1+rΔt)ⁿ while MC uses "
+            "e^(−rT), and the two engines monitor at different frequencies "
+            f"(tree n={params.n} vs MC n={mc['n_steps']}). For path-dependent payoffs "
+            "the monitoring frequency genuinely changes the contract being priced."
+        )
+
+    if "knockout_rate" in mc:
+        note(f"<b>{mc['knockout_rate']*100:.1f}%</b> of simulated paths breached the "
+             f"barrier at ${mc['barrier']:.2f} and were knocked out.")
+
+    # Convergence
+    section("Convergence — the 1/√N Law")
+    with st.spinner("Running convergence study..."):
+        conv_rows = []
+        for N in [1_000, 5_000, 10_000, 25_000, 50_000, 100_000]:
+            if N > n_paths:
+                break
+            try:
+                cr = run_monte_carlo(spec.key, ticker, r, T, n_steps, vol_window,
+                                     tuple(sorted(mc_inputs.items())),
+                                     N, antithetic, 42)
+                conv_rows.append({"N": N, "price": cr["price"],
+                                  "lo": cr["ci_low"], "hi": cr["ci_high"],
+                                  "se": cr["std_error"]})
+            except Exception:
+                pass
+
+    if conv_rows:
+        cdf = pd.DataFrame(conv_rows)
+        figc = go.Figure()
+        figc.add_trace(go.Scatter(
+            x=cdf["N"], y=cdf["hi"], mode="lines", line=dict(width=0),
+            showlegend=False, hoverinfo="skip"))
+        figc.add_trace(go.Scatter(
+            x=cdf["N"], y=cdf["lo"], mode="lines", line=dict(width=0),
+            fill="tonexty", fillcolor="rgba(26,95,168,0.15)",
+            name="95% CI", hoverinfo="skip"))
+        figc.add_trace(go.Scatter(
+            x=cdf["N"], y=cdf["price"], mode="lines+markers",
+            name="MC estimate", line=dict(color=BLUE_MID, width=2.5),
+            marker=dict(size=7)))
+        figc.add_hline(y=tree_price, line=dict(color=BLUE_DARK, width=2, dash="dash"),
+                       annotation_text=f"Tree = ${tree_price:.4f}",
+                       annotation_position="right")
+        figc.update_layout(
+            title="MC price and confidence band as paths increase",
+            xaxis=dict(title="Number of paths (log scale)", type="log",
+                       gridcolor="#e8f0f8"),
+            yaxis=dict(title="Price ($)", tickprefix="$", gridcolor="#e8f0f8"),
+            plot_bgcolor="white", paper_bgcolor="white",
+            legend=dict(orientation="h", y=-0.2), height=430,
+        )
+        st.plotly_chart(figc, use_container_width=True, key=f"{key_prefix}_mcconv")
+
+        cdf["CI width"] = (cdf["hi"] - cdf["lo"]).round(5)
+        st.dataframe(
+            cdf[["N", "price", "se", "CI width"]]
+            .rename(columns={"N": "Paths", "price": "Price ($)",
+                             "se": "Std. error"})
+            .set_index("Paths"), use_container_width=True)
+        note("Standard error falls as 1/√N: quadrupling the paths halves the error. "
+             "This is the fundamental cost of Monte Carlo — reaching one extra decimal "
+             "place of precision requires 100× the computation, which is exactly why "
+             "variance-reduction techniques matter so much in practice.")
+
+    # Sample paths
+    if mc.get("sample_paths") is not None:
+        section("Sample Simulated Paths")
+        sp = mc["sample_paths"][:60]
+        tgrid = np.linspace(0, params.T, sp.shape[1])
+        figp = go.Figure()
+        for row in sp:
+            figp.add_trace(go.Scatter(
+                x=tgrid, y=row, mode="lines",
+                line=dict(color="rgba(26,95,168,0.20)", width=1),
+                showlegend=False, hoverinfo="skip"))
+        figp.add_trace(go.Scatter(
+            x=tgrid, y=sp.mean(axis=0), mode="lines", name="Mean path",
+            line=dict(color=BLUE_DARK, width=3)))
+        figp.add_hline(y=params.S0, line=dict(color="#7a9ab8", width=1, dash="dot"),
+                       annotation_text=f"S₀ = ${params.S0:.2f}")
+        figp.update_layout(
+            title=f"60 of {mc['n_paths']:,} simulated GBM paths",
+            xaxis=dict(title="Time (years)", gridcolor="#e8f0f8"),
+            yaxis=dict(title="Stock price", tickprefix="$", gridcolor="#e8f0f8"),
+            plot_bgcolor="white", paper_bgcolor="white",
+            legend=dict(orientation="h", y=-0.2), height=430,
+        )
+        st.plotly_chart(figp, use_container_width=True, key=f"{key_prefix}_mcpaths")
+        note("Each path is an exact draw from the GBM solution "
+             "S_t = S₀·exp[(r − σ²/2)t + σW_t] — no Euler discretisation bias in the "
+             "dynamics themselves. The only discretisation is how finely the payoff "
+             "is monitored, which is what the steps slider controls.")
+
+
 # ── sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown(f"""
@@ -681,8 +1137,10 @@ if spec.key != "asian_float":
             st.error(f"Could not price **{ticker}**: {e}")
             st.stop()
 
-    tab_labels = ["💰 Pricer", "📊 Model", "🔬 Robustness", "📖 Methodology"]
-    gtab1, gtab2, gtab3, gtab4 = st.tabs(tab_labels)
+    tab_labels = ["💰 Pricer", "📊 Model", "🎯 Greeks", "🌊 Vol Surface",
+                  "🎲 Monte Carlo", "🔬 Robustness", "📖 Methodology"]
+    (gtab1, gtab2, gtab_gk, gtab_vs, gtab_mc,
+     gtab3, gtab4) = st.tabs(tab_labels)
 
     # ── PRICER ────────────────────────────────────────────────────────────────
     with gtab1:
@@ -816,6 +1274,18 @@ if spec.key != "asian_float":
             with st.expander("🌲 Binomial Tree (first 5 periods)", expanded=False):
                 st.plotly_chart(plot_binomial_tree(params, k=5), use_container_width=True, key="g_tree")
 
+    # ── GREEKS / VOL SURFACE / MONTE CARLO ───────────────────────────────────
+    with gtab_gk:
+        render_greeks_tab(spec, params, result, extra_inputs, ticker,
+                          r, T, n, vol_window, key_prefix="gen")
+
+    with gtab_vs:
+        render_vol_surface_tab(ticker, params, r, key_prefix="gen")
+
+    with gtab_mc:
+        render_mc_tab(spec, params, result, extra_inputs, ticker,
+                      r, T, vol_window, key_prefix="gen")
+
     # ── ROBUSTNESS ───────────────────────────────────────────────────────────
     with gtab3:
         section("Volatility Window Sensitivity")
@@ -943,7 +1413,22 @@ with st.spinner(f"Fetching {ticker} · running Asian pricer (2ⁿ paths)..."):
         """)
         st.stop()
 
-tab1, tab2, tab3, tab4 = st.tabs(["💰 Pricer", "📊 Model", "🔬 Robustness", "📖 Methodology"])
+tab1, tab2, tab_gk, tab_vs, tab_mc, tab3, tab4 = st.tabs(
+    ["💰 Pricer", "📊 Model", "🎯 Greeks", "🌊 Vol Surface",
+     "🎲 Monte Carlo", "🔬 Robustness", "📖 Methodology"])
+
+
+# ── NEW TABS (Asian flow) ─────────────────────────────────────────────────────
+with tab_gk:
+    render_greeks_tab(spec, params, result, extra_inputs, ticker,
+                      r, T, n, vol_window, key_prefix="asn")
+
+with tab_vs:
+    render_vol_surface_tab(ticker, params, r, key_prefix="asn")
+
+with tab_mc:
+    render_mc_tab(spec, params, result, extra_inputs, ticker,
+                  r, T, vol_window, key_prefix="asn")
 
 
 # ── TAB 1: PRICER ─────────────────────────────────────────────────────────────
