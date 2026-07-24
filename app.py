@@ -30,6 +30,7 @@ try:
         plot_payoff_distribution, plot_payoff_vs_terminal,
         plot_window_sensitivity, plot_approx_convergence,
     )
+    from src.options.registry import REGISTRY, by_category
     try:
         from data.database import save_prices, load_prices
         DB_AVAILABLE = True
@@ -40,20 +41,6 @@ except Exception as e:
     st.error(f"Import error: {e}")
     st.code(traceback.format_exc())
     st.stop()
-
-from src.options.registry import REGISTRY, by_category
-
-category = st.radio("Category", ["classic", "exotic"])
-spec = st.selectbox("Option", by_category(category),
-                    format_func=lambda s: s.name)
-inputs = {}
-for ei in spec.extra_inputs:
-    inputs[ei.key] = st.number_input(ei.label, ei.minimum, ei.maximum,
-                                     ei.default, help=ei.help)
-n = st.slider("Steps", 5, MAX_N if spec.engine == "paths" else 500,
-              min(spec.default_n, MAX_N) if spec.engine == "paths" else spec.default_n)
-result = spec.price(params, **inputs)   # wrap in st.cache_data like run_pricer
-
 
 # ── styling ───────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -126,6 +113,48 @@ def run_robustness(ticker, r, T, n, _df_hash):
     return volatility_window_sensitivity(df, ticker, r=r, T=T, n=n)
 
 @st.cache_data(show_spinner=False)
+def run_option(spec_key, ticker, r, T, n, vol_window, inputs_items):
+    """Calibrate and price any registry option. inputs_items is a hashable
+    tuple(sorted(dict.items())) so st.cache_data can key on it."""
+    df     = get_prices(ticker)
+    params = calibrate(df, ticker, r=r, T=T, n=n, volatility_window=vol_window)
+    result = REGISTRY[spec_key].price(params, **dict(inputs_items))
+    return df, params, result
+
+
+def bs_reference(spec_key, p, extra):
+    """Black–Scholes closed form for the options that have one — the
+    continuous-time limit (GBM / Itô) the binomial model converges to.
+    Uses e^{-rT} discounting, vs the tree's (1+rΔt)^n, so a small gap remains."""
+    from scipy.stats import norm
+    K = float(extra.get("k_moneyness", 1.0)) * p.S0
+    d1 = (math.log(p.S0 / K) + (p.r + p.sigma**2 / 2) * p.T) / (p.sigma * math.sqrt(p.T))
+    d2 = d1 - p.sigma * math.sqrt(p.T)
+    disc = math.exp(-p.r * p.T)
+    if spec_key == "euro_call":
+        return p.S0 * norm.cdf(d1) - K * disc * norm.cdf(d2)
+    if spec_key == "euro_put":
+        return K * disc * norm.cdf(-d2) - p.S0 * norm.cdf(-d1)
+    if spec_key == "digital_call":
+        return float(extra.get("payout", 1.0)) * disc * norm.cdf(d2)
+    return None
+
+
+PAYOFF_LATEX = {
+    "euro_call":       r"X_T = \max(S_n - K,\ 0)",
+    "euro_put":        r"X_T = \max(K - S_n,\ 0)",
+    "amer_call":       r"X_t = \max(S_t - K,\ 0) \quad \text{exercisable at any } t \le T",
+    "amer_put":        r"X_t = \max(K - S_t,\ 0) \quad \text{exercisable at any } t \le T",
+    "digital_call":    r"X_T = Q \cdot \mathbf{1}\{S_n > K\}",
+    "asian_float":     r"A_T = \max\!\left(S_n - \bar{S}_n,\ 0\right), \quad \bar{S}_n = \frac{1}{n+1}\sum_{t=0}^{n} S_t",
+    "asian_fixed":     r"A_T = \max\!\left(\bar{S}_n - K,\ 0\right), \quad \bar{S}_n = \frac{1}{n+1}\sum_{t=0}^{n} S_t",
+    "lookback_float":  r"X_T = S_n - \min_{0 \le t \le n} S_t",
+    "barrier_uo_call": r"X_T = \max(S_n - K,\ 0)\cdot \mathbf{1}\{\max_t S_t < H\}",
+    "chooser":         r"X_m = \max\!\left(C_m(K),\ P_m(K)\right) \ \text{at choice date } m",
+}
+
+
+@st.cache_data(show_spinner=False)
 def run_convergence(_params_hash, sigma, r, T, n, S0, u, d, q, R_period, discount):
     """Cache convergence — reconstruct params from primitives (hashable)."""
     from src.model.calibration import ModelParams
@@ -149,9 +178,33 @@ with st.sidebar:
         if ticker:
             st.caption("US: `AAPL` `MSFT` `GS` — Europe: `SIE.DE` `ASML.AS` `BNP.PA` — use Yahoo Finance suffix")
 
+    st.subheader("Option")
+    category = st.radio("Category", ["classic", "exotic"], index=1,
+                        horizontal=True, format_func=str.capitalize)
+    specs = by_category(category)
+    _default = next((i for i, s in enumerate(specs) if s.key == "asian_float"), 0)
+    spec = st.selectbox("Option type", specs, index=_default,
+                        format_func=lambda s: s.name)
+    st.caption(spec.description)
+
+    extra_inputs = {}
+    for ei in spec.extra_inputs:
+        extra_inputs[ei.key] = st.number_input(
+            ei.label,
+            min_value=float(ei.minimum), max_value=float(ei.maximum),
+            value=float(ei.default), step=0.05,
+            help=ei.help, key=f"ei_{spec.key}_{ei.key}",
+        )
+
     st.subheader("Model Parameters")
     T = st.slider("Maturity T (years)", 0.25, 2.0, 0.5, 0.25)
-    n = st.slider("Binomial steps n", 5, 20, 20, 5)
+    if spec.engine == "paths":
+        n = st.slider("Binomial steps n", 5, MAX_N, min(20, MAX_N), 5)
+        st.caption(f"Path enumeration is O(2ⁿ) — capped at n = {MAX_N}.")
+    else:
+        n = st.slider("Binomial steps n", 25, 500, spec.default_n, 25)
+        st.caption("Recombining lattice is O(n²) — large n is cheap and improves "
+                   "convergence to the continuous (Black–Scholes) limit.")
 
     use_live_r = st.checkbox("Fetch live risk-free rate (^IRX)", value=False)
     if use_live_r:
@@ -181,8 +234,9 @@ with st.sidebar:
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
-st.title("European Floating-Strike Asian Call Option")
-st.latex(r"A_T = \max\!\left(S_n - \bar{S}_n,\ 0\right), \quad \bar{S}_n = \frac{1}{n+1}\sum_{t=0}^{n} S_t")
+st.title(spec.name)
+if spec.key in PAYOFF_LATEX:
+    st.latex(PAYOFF_LATEX[spec.key])
 
 if not run:
     st.info("Configure parameters in the sidebar and click **Price** to run.")
@@ -192,6 +246,139 @@ if not ticker:
     st.error("Please enter a ticker symbol.")
     st.stop()
 
+# ═══════════════════════════════════════════════════════════
+# GENERIC OPTIONS (everything except the original Asian floating-strike)
+# ═══════════════════════════════════════════════════════════
+if spec.key != "asian_float":
+    with st.spinner(f"Fetching {ticker} and pricing {spec.name}..."):
+        try:
+            df, params, result = run_option(
+                spec.key, ticker, r, T, n, vol_window,
+                tuple(sorted(extra_inputs.items())),
+            )
+        except Exception as e:
+            st.error(f"Could not price **{ticker}**: {e}")
+            st.stop()
+
+    gtab1, gtab2 = st.tabs(["💰 Pricer", "📊 Model"])
+
+    with gtab1:
+        section("Option Price")
+        bs = bs_reference(spec.key, params, extra_inputs)
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            metric("Option Price (Binomial)", f"${result['price']:.4f}",
+                   f"{spec.engine} engine · n = {params.n}")
+        with c2:
+            if bs is not None:
+                metric("Black–Scholes (closed form)", f"${bs:.4f}",
+                       f"Δ = {result['price'] - bs:+.4f} vs lattice")
+            elif "strike" in result:
+                metric("Strike K", f"${result['strike']:.2f}",
+                       f"{extra_inputs.get('k_moneyness', 1.0):.2f} × S₀")
+            else:
+                metric("S₀", f"${params.S0:.2f}", "spot at calibration")
+        with c3:
+            if spec.key in ("amer_call", "amer_put"):
+                metric("Early-Exercise Premium",
+                       f"${result['early_exercise_premium']:.4f}",
+                       f"European twin: ${result['european_price']:.4f}")
+            elif spec.key == "digital_call":
+                metric("Risk-neutral P(ITM)", f"{result['rn_prob_itm']:.4f}",
+                       "price / discounted payout")
+            elif spec.key == "barrier_uo_call":
+                metric("Vanilla Twin", f"${result['vanilla_price']:.4f}",
+                       f"barrier H = ${result['barrier']:.2f}")
+            elif spec.key == "chooser":
+                metric("Call / Put Legs",
+                       f"${result['call_price']:.2f} / ${result['put_price']:.2f}",
+                       f"choice at step {result['choice_step']}")
+            elif "n_paths" in result:
+                metric("Paths Enumerated", f"{result['n_paths']:,}", f"2^{params.n}")
+            else:
+                metric("σ (annual)", f"{params.sigma*100:.2f}%", vol_window)
+        with c4:
+            if spec.key == "barrier_uo_call" and result.get("up_and_in_price") is not None:
+                metric("Up-and-In Twin", f"${result['up_and_in_price']:.4f}",
+                       "in–out parity: in + out = vanilla")
+            else:
+                metric("q (risk-neutral)", f"{params.q:.4f}",
+                       f"discount/step = {params.discount:.6f}")
+
+        if bs is not None:
+            note(
+                f"The lattice price converges to the <b>Black–Scholes</b> value as n→∞ — "
+                f"the binomial model is a discretisation of the GBM dynamics "
+                f"dS = rS dt + σS dW under ℚ. The residual gap "
+                f"({(result['price']-bs)/bs*100:+.3f}%) mixes finite-n error with the "
+                f"discounting convention: the tree uses (1+rΔt)ⁿ, Black–Scholes uses e^{{-rT}}."
+            )
+        if spec.key == "amer_call":
+            note("Without dividends, early exercise of an American call is never optimal — "
+                 "its premium above the European call should be exactly zero. "
+                 "This is a built-in sanity check of the lattice.")
+        if spec.key == "digital_call":
+            note("Rescaled by the discounted payout, the digital price reveals the "
+                 "risk-neutral probability of finishing in-the-money — the lattice "
+                 "counterpart of N(d₂) in the Black–Scholes formula. Note: binomial "
+                 "digitals oscillate in n because the payoff discontinuity falls between "
+                 "nodes; averaging prices at n and n+1 damps the sawtooth.")
+
+        section("Model Parameters")
+        ca, cb = st.columns(2)
+        with ca:
+            st.dataframe(pd.DataFrame({
+                "Parameter": ["S₀", "σ (annual)", "r (annual)", "T", "n", "Δt"],
+                "Value": [f"${params.S0:.4f}", f"{params.sigma*100:.4f}%",
+                          f"{params.r*100:.4f}%", f"{params.T:.2f} yrs",
+                          str(params.n), f"{params.dt:.6f} yrs"],
+            }).set_index("Parameter"), use_container_width=True)
+        with cb:
+            st.dataframe(pd.DataFrame({
+                "Parameter": ["u", "d", "R_period", "q", "discount"],
+                "Value": [f"{params.u:.6f}", f"{params.d:.6f}",
+                          f"{params.R_period:.8f}", f"{params.q:.6f}",
+                          f"{params.discount:.8f}"],
+            }).set_index("Parameter"), use_container_width=True)
+
+    with gtab2:
+        sigma_daily = params.sigma / math.sqrt(250)
+        with st.expander("📈 Historical Data", expanded=True):
+            st.plotly_chart(plot_price_series(df, ticker), use_container_width=True, key="g_price")
+            st.plotly_chart(plot_log_returns(df, ticker, sigma_daily), use_container_width=True, key="g_returns")
+
+        has_payoff_data = "S_terminal" in result and (
+            "terminal_values" in result or "payoffs" in result)
+        if has_payoff_data:
+            with st.expander("💵 Payoff at Maturity", expanded=True):
+                import plotly.graph_objects as go
+                order = np.argsort(result["S_terminal"])
+                fig = go.Figure(go.Scatter(
+                    x=result["S_terminal"][order],
+                    y=(result["terminal_values"][order] if "terminal_values" in result
+                       else result["payoffs"][order]),
+                    mode="lines" if spec.engine == "lattice" else "markers",
+                    marker=dict(size=3, opacity=0.25), line=dict(color="#1a3a5c"),
+                ))
+                fig.update_layout(
+                    title=f"{spec.name} — payoff vs terminal price",
+                    xaxis_title="Terminal stock price Sₙ", yaxis_title="Payoff ($)",
+                    height=400,
+                )
+                st.plotly_chart(fig, use_container_width=True, key="g_payoff")
+                if spec.engine == "paths":
+                    note("The vertical spread at a fixed Sₙ is the visual signature of "
+                         "path dependence — identical terminal prices, different payoffs.")
+
+        if spec.engine == "lattice":
+            with st.expander("🌲 Binomial Tree", expanded=False):
+                st.plotly_chart(plot_binomial_tree(params, k=5), use_container_width=True, key="g_tree")
+
+    st.stop()
+
+# ═══════════════════════════════════════════════════════════
+# ORIGINAL ASIAN FLOATING-STRIKE FLOW (unchanged below)
+# ═══════════════════════════════════════════════════════════
 with st.spinner(f"Fetching {ticker} and running pricer..."):
     try:
         df, params, result, approx, emp = run_pricer(ticker, r, T, n, vol_window)
