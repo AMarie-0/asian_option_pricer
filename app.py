@@ -41,6 +41,20 @@ except Exception as e:
     st.code(traceback.format_exc())
     st.stop()
 
+from src.options.registry import REGISTRY, by_category
+
+category = st.radio("Category", ["classic", "exotic"])
+spec = st.selectbox("Option", by_category(category),
+                    format_func=lambda s: s.name)
+inputs = {}
+for ei in spec.extra_inputs:
+    inputs[ei.key] = st.number_input(ei.label, ei.minimum, ei.maximum,
+                                     ei.default, help=ei.help)
+n = st.slider("Steps", 5, MAX_N if spec.engine == "paths" else 500,
+              min(spec.default_n, MAX_N) if spec.engine == "paths" else spec.default_n)
+result = spec.price(params, **inputs)   # wrap in st.cache_data like run_pricer
+
+
 # ── styling ───────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
