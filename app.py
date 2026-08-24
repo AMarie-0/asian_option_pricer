@@ -734,8 +734,14 @@ def render_vol_surface_tab(ticker, params, r, key_prefix="g"):
         n_exp = st.slider("Expiries to fetch", 3, 12, 6, 1,
                           key=f"{key_prefix}_vsexp")
 
-    if not st.button("🔄 Fetch surface", key=f"{key_prefix}_vsbtn",
-                     use_container_width=True):
+    # Same session-state pattern as the main Price button: the click sets a
+    # persistent flag, so later reruns (slider moves, other tabs) keep the
+    # surface on screen instead of resetting to the info message.
+    fetch_clicked = st.button("🔄 Fetch surface", key=f"{key_prefix}_vsbtn",
+                              use_container_width=True)
+    if fetch_clicked:
+        st.session_state[f"{key_prefix}_vs_go"] = True
+    if not st.session_state.get(f"{key_prefix}_vs_go", False):
         st.info("Click **Fetch surface** to pull the live options chain. "
                 "Cached for 15 minutes.")
         return
@@ -889,8 +895,11 @@ def render_mc_tab(spec, params, result, extra_inputs, ticker,
     st.caption(f"Simulation is chunked; peak memory stays bounded regardless "
                f"of path count (unchunked this run would need ~{mem:.0f} MB).")
 
-    if not st.button("▶ Run simulation", key=f"{key_prefix}_mcbtn",
-                     use_container_width=True, type="primary"):
+    run_clicked = st.button("▶ Run simulation", key=f"{key_prefix}_mcbtn",
+                            use_container_width=True, type="primary")
+    if run_clicked:
+        st.session_state[f"{key_prefix}_mc_go"] = True
+    if not st.session_state.get(f"{key_prefix}_mc_go", False):
         st.info("Configure and click **Run simulation**.")
         return
 
@@ -1120,6 +1129,15 @@ with st.sidebar:
     )
 
     run = st.button("▶  Price", type="primary", use_container_width=True)
+    # st.button is only True on the rerun its own click triggers. Any other
+    # widget interaction (an inner button, a slider) reruns the script with
+    # run=False and would bounce the user back to the landing screen.
+    # Persisting the flag in session_state keeps the app "priced" until the
+    # user actively changes something (all pricing calls are cached, so
+    # re-renders are free).
+    if run:
+        st.session_state["priced"] = True
+    priced = st.session_state.get("priced", False)
     st.divider()
     st.caption("CRR binomial tree · 2ⁿ path enumeration (path-dependent) · "
                "recombining lattice (vanilla/exotics) · Black–Scholes benchmark")
@@ -1141,7 +1159,7 @@ st.title(spec.name)
 if spec.key in PAYOFF_LATEX:
     st.latex(PAYOFF_LATEX[spec.key])
 
-if not run:
+if not priced:
     st.info("Configure parameters in the sidebar and click **▶ Price** to run.")
     footer()
     st.stop()
