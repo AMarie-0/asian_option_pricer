@@ -1033,13 +1033,26 @@ def render_mc_tab(spec, params, result, extra_inputs, ticker,
 
 # ── sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
+    alpha_mode = st.toggle(
+        "🧪 Alpha mode",
+        value=False,
+        help="Unlock the experimental multi-option engine: 5 classic + 5 exotic "
+             "options, Greeks, live volatility surface, and Monte Carlo. "
+             "The default tool prices the European floating-strike Asian call.",
+    )
+
+    _title = "🧪 Derivatives Pricer" if alpha_mode else "📐 Asian Option Pricer"
+    _sub = ("ALPHA · 10 options · Greeks · Vol Surface · Monte Carlo"
+            if alpha_mode else
+            "European floating-strike Asian call · CRR binomial tree")
+    _sub_color = "#b5651d" if alpha_mode else "#7a9ab8"
     st.markdown(f"""
     <div style="padding:8px 0 4px;">
       <div style="font-size:22px;font-weight:800;color:{BLUE_DARK};letter-spacing:-0.5px;">
-        📐 Derivatives Pricer
+        {_title}
       </div>
-      <div style="font-size:11px;color:#7a9ab8;margin-top:2px;letter-spacing:.04em;">
-        CRR Binomial Tree &nbsp;·&nbsp; Classic & Exotic Options
+      <div style="font-size:11px;color:{_sub_color};margin-top:2px;letter-spacing:.04em;">
+        {_sub}
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -1054,14 +1067,18 @@ with st.sidebar:
         if ticker:
             st.caption("US: `AAPL` `MSFT` `GS` — Europe: `SIE.DE` `ASML.AS` `BNP.PA`")
 
-    st.subheader("Option")
-    category = st.radio("Category", ["classic", "exotic"], index=1,
-                        horizontal=True, format_func=str.capitalize)
-    specs = by_category(category)
-    _default = next((i for i, s in enumerate(specs) if s.key == "asian_float"), 0)
-    spec = st.selectbox("Option type", specs, index=_default,
-                        format_func=lambda s: s.name)
-    st.caption(spec.description)
+    if alpha_mode:
+        st.subheader("Option")
+        category = st.radio("Category", ["classic", "exotic"], index=1,
+                            horizontal=True, format_func=str.capitalize)
+        specs = by_category(category)
+        _default = next((i for i, s in enumerate(specs) if s.key == "asian_float"), 0)
+        spec = st.selectbox("Option type", specs, index=_default,
+                            format_func=lambda s: s.name)
+        st.caption(spec.description)
+    else:
+        # Default tool: locked to the European floating-strike Asian call.
+        spec = REGISTRY["asian_float"]
 
     extra_inputs = {}
     for ei in spec.extra_inputs:
@@ -1109,6 +1126,17 @@ with st.sidebar:
 
 
 # ── main header ───────────────────────────────────────────────────────────────
+if alpha_mode:
+    st.markdown(
+        f'<div style="background:#fff3cd;border-left:4px solid #b5651d;'
+        f'padding:8px 14px;border-radius:0 6px 6px 0;margin-bottom:12px;'
+        f'font-size:13px;color:#5a3e00;">'
+        f'🧪 <b>Alpha mode</b> — experimental multi-option engine. '
+        f'The default tool prices the European floating-strike Asian call; '
+        f'toggle Alpha off in the sidebar to return to it.</div>',
+        unsafe_allow_html=True,
+    )
+
 st.title(spec.name)
 if spec.key in PAYOFF_LATEX:
     st.latex(PAYOFF_LATEX[spec.key])
@@ -1413,22 +1441,26 @@ with st.spinner(f"Fetching {ticker} · running Asian pricer (2ⁿ paths)..."):
         """)
         st.stop()
 
-tab1, tab2, tab_gk, tab_vs, tab_mc, tab3, tab4 = st.tabs(
-    ["💰 Pricer", "📊 Model", "🎯 Greeks", "🌊 Vol Surface",
-     "🎲 Monte Carlo", "🔬 Robustness", "📖 Methodology"])
+if alpha_mode:
+    tab1, tab2, tab_gk, tab_vs, tab_mc, tab3, tab4 = st.tabs(
+        ["💰 Pricer", "📊 Model", "🎯 Greeks", "🌊 Vol Surface",
+         "🎲 Monte Carlo", "🔬 Robustness", "📖 Methodology"])
 
+    # ── NEW TABS (Asian flow, alpha only) ─────────────────────────────────────
+    with tab_gk:
+        render_greeks_tab(spec, params, result, extra_inputs, ticker,
+                          r, T, n, vol_window, key_prefix="asn")
 
-# ── NEW TABS (Asian flow) ─────────────────────────────────────────────────────
-with tab_gk:
-    render_greeks_tab(spec, params, result, extra_inputs, ticker,
-                      r, T, n, vol_window, key_prefix="asn")
+    with tab_vs:
+        render_vol_surface_tab(ticker, params, r, key_prefix="asn")
 
-with tab_vs:
-    render_vol_surface_tab(ticker, params, r, key_prefix="asn")
-
-with tab_mc:
-    render_mc_tab(spec, params, result, extra_inputs, ticker,
-                  r, T, vol_window, key_prefix="asn")
+    with tab_mc:
+        render_mc_tab(spec, params, result, extra_inputs, ticker,
+                      r, T, vol_window, key_prefix="asn")
+else:
+    # Default tool: the original four tabs, unchanged.
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["💰 Pricer", "📊 Model", "🔬 Robustness", "📖 Methodology"])
 
 
 # ── TAB 1: PRICER ─────────────────────────────────────────────────────────────
