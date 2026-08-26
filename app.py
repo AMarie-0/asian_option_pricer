@@ -13,7 +13,7 @@ GITHUB_USER = "antoinemarie"   # ← change to your actual GitHub username
 
 st.set_page_config(
     page_title="Derivatives Pricer",
-    page_icon="📐",
+    page_icon="🧮",
     layout="wide",
 )
 
@@ -1033,7 +1033,8 @@ def render_mc_tab(spec, params, result, extra_inputs, ticker,
             plot_bgcolor="white", paper_bgcolor="white",
             legend=dict(orientation="h", y=-0.2), height=430,
         )
-        st.plotly_chart(figp, use_container_width=True, key=f"{key_prefix}_mcpaths")
+        st.plotly_chart(figp, use_container_width=True,
+                        key=f"{key_prefix}_mc_sample_paths")
         note("Each path is an exact draw from the GBM solution "
              "S_t = S₀·exp[(r − σ²/2)t + σW_t] — no Euler discretisation bias in the "
              "dynamics themselves. The only discretisation is how finely the payoff "
@@ -1043,15 +1044,15 @@ def render_mc_tab(spec, params, result, extra_inputs, ticker,
 # ── sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     alpha_mode = st.toggle(
-        "🧪 Alpha mode",
+        "🔬 Research mode",
         value=False,
-        help="Unlock the experimental multi-option engine: 5 classic + 5 exotic "
-             "options, Greeks, live volatility surface, and Monte Carlo. "
+        help="Unlock the research engine: 5 classic + 5 exotic options, "
+             "Greeks, live volatility surface, and Monte Carlo. "
              "The default tool prices the European floating-strike Asian call.",
     )
 
-    _title = "🧪 Derivatives Pricer" if alpha_mode else "📐 Asian Option Pricer"
-    _sub = ("ALPHA · 10 options · Greeks · Vol Surface · Monte Carlo"
+    _title = "🔬 Derivatives Pricer" if alpha_mode else "🧮 Asian Option Pricer"
+    _sub = ("RESEARCH · 10 options · Greeks · Vol Surface · Monte Carlo"
             if alpha_mode else
             "European floating-strike Asian call · CRR binomial tree")
     _sub_color = "#b5651d" if alpha_mode else "#7a9ab8"
@@ -1149,9 +1150,9 @@ if alpha_mode:
         f'<div style="background:#fff3cd;border-left:4px solid #b5651d;'
         f'padding:8px 14px;border-radius:0 6px 6px 0;margin-bottom:12px;'
         f'font-size:13px;color:#5a3e00;">'
-        f'🧪 <b>Alpha mode</b> — experimental multi-option engine. '
+        f'🔬 <b>Research mode</b> — extended multi-option engine. '
         f'The default tool prices the European floating-strike Asian call; '
-        f'toggle Alpha off in the sidebar to return to it.</div>',
+        f'toggle Research mode off in the sidebar to return to it.</div>',
         unsafe_allow_html=True,
     )
 
